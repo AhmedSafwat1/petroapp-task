@@ -1,59 +1,151 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Station transfer events (PetroApp task)
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Laravel 12 API that ingests station transfer events idempotently and exposes per-station reconciliation summaries.
 
-## About Laravel
+## Tech stack
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+- PHP 8.2+, Laravel 12
+- **PostgreSQL** (application default connection)
+- PHPUnit (tests use SQLite in-memory for speed via `phpunit.xml`)
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## API (v1)
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+Base path: **`/api/v1`**
 
-## Learning Laravel
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/transfers` | Ingest a batch of events |
+| `GET` | `/api/v1/stations/{station_id}/summary` | Station reconciliation summary |
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework. You can also check out [Laravel Learn](https://laravel.com/learn), where you will be guided through building a modern Laravel application.
+OpenAPI: generate with `php artisan l5-swagger:generate`, then open Swagger UI at [`/api/documentation`](http://localhost:8010/api/documentation) (same host as the app).
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+## Design
 
-## Laravel Sponsors
+### Idempotency
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+- `event_id` has a **unique** database constraint.
+- Inserts use Laravel’s **`insertOrIgnore`**, which maps to **`ON CONFLICT DO NOTHING`** on PostgreSQL (and equivalent behavior on other drivers), so duplicates never overwrite or double-insert.
 
-### Premium Partners
+### Concurrency
 
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
+- Overlapping requests with the same `event_id` race at the database; the unique index ensures **at most one row** per `event_id`.
+- No application-level mutex is required for correctness.
 
-## Contributing
+### Validation
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+- **Fail-fast**: if any event in the batch fails validation, the entire request returns **400** with `message` and `errors`.
+- `created_at` must match `Y-m-d\TH:i:s\Z` (UTC `Z`).
 
-## Code of Conduct
+### Reconciliation rules
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+- **`total_approved_amount`**: sum of `amount` where `status === "approved"` (unknown statuses are stored but do not contribute).
+- **`events_count`**: count of **all** stored events for that station (all statuses).
 
-## Security Vulnerabilities
+### Performance
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+- **Bulk inserts**: rows are inserted in chunks (500 per statement) using `insertOrIgnore`, minimizing round-trips for large batches.
+- **Indexes**: unique on `event_id`, index on `station_id` for summary lookups.
+- **Summary**: one aggregate query (`COUNT` + conditional `SUM`) per station.
 
-## License
+## Local setup
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+Requirements: PHP 8.2+ with **pdo_pgsql**, Composer, and a running **PostgreSQL** server.
+
+1. Create a database and user (example):
+
+```bash
+createdb petro_app_task   # or use psql / a GUI
+```
+
+2. Configure `.env` (see `.env.example`):
+
+```env
+DB_CONNECTION=pgsql
+DB_HOST=127.0.0.1
+DB_PORT=5432
+DB_DATABASE=your_database
+DB_USERNAME=your_user
+DB_PASSWORD=your_password
+```
+
+3. Install dependencies and migrate:
+
+```bash
+cp .env.example .env   # if you do not have .env yet
+php artisan key:generate
+php artisan migrate
+composer swagger   # writes storage/api-docs/api-docs.json for Swagger UI
+```
+
+For local development you may set `L5_SWAGGER_GENERATE_ALWAYS=true` in `.env` so `/api/documentation` regenerates the spec on each request (avoid in production).
+
+### Run
+
+```bash
+make run
+# or
+./scripts/run.sh
+```
+
+### Tests
+
+```bash
+make test
+# or
+php artisan test
+```
+
+## Docker
+
+Stack: **PHP app** + **PostgreSQL 16**. The app container runs `migrate` on startup, then `artisan serve`.
+
+```bash
+docker compose up --build
+```
+
+- API: `http://localhost:8010`
+- Postgres: `localhost:5432` (defaults: user/password/database `laravel`; override with `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_PORT` in a `.env` file next to `docker-compose.yml`)
+
+Run tests (still uses SQLite in-memory from `phpunit.xml`, no DB container required for the test process):
+
+```bash
+docker compose run --rm app php artisan test
+```
+
+## API examples (curl)
+
+Ingest:
+
+```bash
+curl -sS -X POST http://localhost:8010/api/v1/transfers \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "events": [
+      {
+        "event_id": "evt-001",
+        "station_id": "S1",
+        "amount": 100.5,
+        "status": "approved",
+        "created_at": "2026-02-19T10:00:00Z"
+      }
+    ]
+  }'
+```
+
+Summary:
+
+```bash
+curl -sS http://localhost:8010/api/v1/stations/S1/summary
+```
+
+## Project structure
+
+- `App\Contracts\Repositories\TransferEventRepositoryInterface` — persistence port
+- `App\Repositories\DatabaseTransferEventRepository` — Laravel query builder (PostgreSQL in production; any PDO driver Laravel supports)
+- `App\Services\Transfer\TransferIngestionService` — ingestion use case
+- `App\Services\Station\StationSummaryService` — summary use case
+- `App\Http\Controllers\Api\V1\*` — HTTP adapters
+
+## Security
+
+Do not commit `.env` or real secrets. Use `.env.example` only as a template.
