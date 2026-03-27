@@ -266,4 +266,4 @@ curl -sS http://localhost:8010/api/v1/stations/S1/summary-report
 
 ## Security
 
-Do not commit `.env` or real secrets. Use `.env.example` only as a template.
+API routes under **`/api/v1`** use Laravel **`throttle:100,1`**: up to **100 requests per minute** per IP (see [`routes/api.php`](routes/api.php)). Over the limit returns **429**. This is basic abuse protection only, not authentication.
