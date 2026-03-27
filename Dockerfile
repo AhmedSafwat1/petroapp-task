@@ -19,7 +19,7 @@ RUN composer install --no-interaction --prefer-dist --optimize-autoloader --no-s
 COPY . .
 
 RUN composer dump-autoload --optimize \
-    && (test -f .env || cp .env.example .env) \
+    && (cp .env.docker .env) \
     && php artisan key:generate --force \
     && chmod +x scripts/docker-entrypoint.sh
 

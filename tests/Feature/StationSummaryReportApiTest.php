@@ -2,8 +2,10 @@
 
 namespace Tests\Feature;
 
+use App\Events\StationsUpdateEvent;
 use App\Models\StationSummary;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Event;
 use Tests\TestCase;
 
 class StationSummaryReportApiTest extends TestCase
@@ -34,6 +36,9 @@ class StationSummaryReportApiTest extends TestCase
 
     public function test_summary_report_matches_live_summary_when_no_cache_row(): void
     {
+        // Avoid eager cache refresh so station_summaries stays empty for this station.
+        Event::fake([StationsUpdateEvent::class]);
+
         $this->postJson($this->uri('/v1/transfers'), [
             'events' => [
                 [

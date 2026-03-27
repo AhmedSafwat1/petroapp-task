@@ -1,10 +1,8 @@
 services:
   postgres:
     image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-laravel}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-laravel}
-      POSTGRES_DB: ${POSTGRES_DB:-laravel}
+    env_file:
+      - .env.docker
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
@@ -17,16 +15,10 @@ services:
 
   app:
     build: .
+    env_file:
+      - .env.docker
     ports:
       - "8010:8010"
-    environment:
-      APP_ENV: local
-      DB_CONNECTION: pgsql
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_DATABASE: ${POSTGRES_DB:-laravel}
-      DB_USERNAME: ${POSTGRES_USER:-laravel}
-      DB_PASSWORD: ${POSTGRES_PASSWORD:-laravel}
     volumes:
       - ./:/var/www/html
       - /var/www/html/vendor

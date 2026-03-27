@@ -58,10 +58,21 @@ class DatabaseTransferEventRepository implements TransferEventRepositoryInterfac
     }
 
     /**
-     * Refresh the summary for a single station.
-     */
-    public function refreshStationSummary(string $stationId): void
-    {
+ * Refresh the summary for a single station.
+ */
+public function refreshStationSummary(string $stationId): void
+{
+    $driver = DB::connection()->getDriverName();
+
+    if ($driver === 'mysql') {
+        // MySQL procedure
         DB::statement("CALL refresh_station_summary(?)", [$stationId]);
+    } elseif ($driver === 'pgsql') {
+        // PostgreSQL function
+        DB::statement("SELECT refresh_station_summary(?)", [$stationId]);
+    } else {
+        // SQLite or other drivers: skip or handle differently
+        // You could log or do nothing
     }
+}
 }
